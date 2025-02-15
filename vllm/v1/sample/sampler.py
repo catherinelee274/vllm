@@ -9,6 +9,9 @@ from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.ops.penalties import (apply_all_penalties,
                                           apply_min_token_penalties)
 from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+from typing import List
+from vllm.transformers_utils.tokenizer import AnyTokenizer, MistralTokenizer
+from vllm.v1.sample.ops.bad_words import NoBadWordsLogitsProcessor
 
 _SAMPLING_EPS = 1e-5
 
@@ -37,6 +40,10 @@ class Sampler(nn.Module):
 
         # Use float32 for the logits.
         logits = logits.to(torch.float32)
+
+        # Apply bad words
+        logits = self.get_bad_words(logits, sampling_metadata)
+
         # Apply penalties (e.g., min_tokens, freq_penalties).
         logits = self.apply_penalties(logits, sampling_metadata)
         # Apply temperature.
@@ -166,3 +173,41 @@ class Sampler(nn.Module):
                 sampling_metadata.repetition_penalties,
                 sampling_metadata.output_token_ids)
         return logits
+
+    def apply_bad_words(
+            self,
+            logits: torch.Tensor,
+            tokenizer: AnyTokenizer,
+            sampling_metadata: SamplingMetadata
+    ) -> torch.Tensor:
+        bad_words_ids: List[List[int]] = list()
+
+        for bad_word in sampling_metadata.bad_words:  
+            for add_prefix_space in [False, True]:
+                prefix = " " if add_prefix_space else ""
+                prompt = prefix + bad_word.lstrip()
+
+                if isinstance(tokenizer, MistralTokenizer):
+                    # Mistral tokenizers should not add special tokens
+                    prompt_token_ids = tokenizer.encode(text=prompt)
+                else:
+                    prompt_token_ids = tokenizer.encode(text=prompt,
+                                                        add_special_tokens=False)
+
+                # If no space at the beginning
+                # or if prefix space produces a new word token
+                if (not add_prefix_space) or (
+                        add_prefix_space
+                        and prompt_token_ids[0] != bad_words_ids[-1][0]
+                        and len(prompt_token_ids) == len(bad_words_ids[-1])):
+                    bad_words_ids.append(prompt_token_ids)
+
+         
+
+        # todo: need to set logits map to -inf if its a bad word
+        for bad_word_ids in bad_words_ids:
+            if len(bad_word_ids) == 1:
+                bad_word_id = bad_word_ids[-1]
+                self.word_bias[bad_word_id] = self._SMALLEST_LOGIT
+
+        return [NoBadWordsLogitsProcessor(bad_words_ids=bad_words_ids)]
