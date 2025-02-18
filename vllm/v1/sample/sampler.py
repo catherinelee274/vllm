@@ -9,6 +9,8 @@ from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.ops.penalties import (apply_all_penalties,
                                           apply_min_token_penalties)
 from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+from typing import List
+from vllm.v1.sample.ops.bad_words import apply_bad_words
 
 _SAMPLING_EPS = 1e-5
 
@@ -37,6 +39,10 @@ class Sampler(nn.Module):
 
         # Use float32 for the logits.
         logits = logits.to(torch.float32)
+
+        # Apply bad words
+        logits = self.get_bad_words(logits, sampling_metadata)
+
         # Apply penalties (e.g., min_tokens, freq_penalties).
         logits = self.apply_penalties(logits, sampling_metadata)
         # Apply temperature.
@@ -166,3 +172,12 @@ class Sampler(nn.Module):
                 sampling_metadata.repetition_penalties,
                 sampling_metadata.output_token_ids)
         return logits
+
+    def apply_bad_words(
+            self,
+            logits: torch.Tensor,
+            tokenizer, 
+            sampling_metadata: SamplingMetadata
+    ) -> torch.Tensor:
+        apply_bad_words
+        
